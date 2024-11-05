@@ -1,58 +1,77 @@
+from android.permissions import request_permissions, check_permission, Permission
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
-from kivy.graphics.texture import Texture
-from kivy.uix.camera import Camera
-from kivy.lang import Builder
-from jnius import autoclass
-import numpy as np
-import cv2
+from kivy.uix.label import Label
+from kivy.uix.button import Button
+from camera4kivy import Preview
 
-
-CameraInfo = autoclass('android.hardware.Camera$CameraInfo')
-CAMERA_INDEX = {'front': CameraInfo.CAMERA_FACING_FRONT, 'back': CameraInfo.CAMERA_FACING_BACK}
-Builder.load_file("myapplayout.kv")
-
-
-class AndroidCamera(Camera):
-    resolution = (640, 480)
-    index = CAMERA_INDEX['back']
-    counter = 0
-
-    def on_tex(self, *l):
-        if self._camera._buffer is None:
-            return None
-
-        super(AndroidCamera, self).on_tex(*l)
-        self.texture = Texture.create(size=np.flip(self.resolution), colorfmt='rgb')
-        frame = self.frame_from_buf()
-        self.frame_to_screen(frame)
-
-    def frame_from_buf(self):
-        w, h = self.resolution
-        frame = np.frombuffer(self._camera._buffer.tostring(), 'uint8').reshape((h + h // 2, w))
-        frame_bgr = cv2.cvtColor(frame, 93)
-        if self.index:
-            return np.flip(np.rot90(frame_bgr, 1), 1)
-        else:
-            return np.rot90(frame_bgr, 3)
-
-    def frame_to_screen(self, frame):
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        cv2.putText(frame_rgb, str(self.counter), (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
-        self.counter += 1
-        flipped = np.flip(frame_rgb, 0)
-        buf = flipped.tobytes()
-        self.texture.blit_buffer(buf, colorfmt='rgb', bufferfmt='ubyte')
-
-
-class MyLayout(BoxLayout):
-    pass
-
-
-class MyApp(App):
+class CameraApp(App):
     def build(self):
-        return MyLayout()
+        self.camera_connected = False
+        
+        # Основний макет додатку
+        layout = BoxLayout(orientation='vertical')
 
+        # Віджет для відображення відео
+        self.image_widget = Preview(size_hint_y=0.7)
+        layout.add_widget(self.image_widget)
+
+        # Статусний ярлик
+        self.status_label = Label(text="Статус: Очікування підключення до камери...")
+        layout.add_widget(self.status_label)
+
+        # Панель кнопок
+        button_layout = BoxLayout(size_hint_y=0.2)
+        
+        start_button = Button(text="Підключитися до камери")
+        start_button.bind(on_press=self.request_permissions_and_start_camera)
+        button_layout.add_widget(start_button)
+
+        stop_button = Button(text="Зупинити камеру")
+        stop_button.bind(on_press=self.stop_camera)
+        button_layout.add_widget(stop_button)
+
+        layout.add_widget(button_layout)
+        return layout
+
+    def request_permissions_and_start_camera(self, instance):
+        # Запит дозволів
+        request_permissions([
+            Permission.CAMERA,
+            Permission.WRITE_EXTERNAL_STORAGE,
+            Permission.READ_MEDIA_IMAGES
+        ])
+        self.check_permissions_and_start_camera()
+
+    def check_permissions_and_start_camera(self):
+        # Перевірка дозволів після запиту
+        if all(check_permission(perm) for perm in [
+            Permission.CAMERA, 
+            Permission.WRITE_EXTERNAL_STORAGE, 
+            Permission.READ_MEDIA_IMAGES
+        ]):
+            self.start_camera()
+        else:
+            self.status_label.text = "Необхідні дозволи не надано. Спробуйте знову."
+
+    def start_camera(self):
+        if not self.camera_connected:
+            try:
+                self.image_widget.connect_camera()  # Підключення до камери через Preview
+                self.camera_connected = True
+                self.status_label.text = "Статус: Камера підключена"
+            except Exception as e:
+                self.status_label.text = f"Помилка підключення до камери: {e}"
+
+    def stop_camera(self, instance):
+        if self.camera_connected:
+            self.image_widget.disconnect_camera()  # Відключення камери
+            self.camera_connected = False
+            self.status_label.text = "Статус: Камера відключена"
+
+    def on_stop(self):
+        if self.camera_connected:
+            self.image_widget.disconnect_camera()
 
 if __name__ == '__main__':
-    MyApp().run()
+    CameraApp().run()
